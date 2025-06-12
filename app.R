@@ -11,6 +11,8 @@ library(dplyr)
 library(stringr)
 library(tidygeocoder)
 library(DT)
+library(readr)
+library(tidyr)
 
 # Set maximum upload size to 30MB (default is 5MB)
 options(shiny.maxRequestSize = 30*1024^2)
@@ -95,256 +97,284 @@ server <- function(input, output, session) {
         error = NULL
     )
     
-    # Parse telemetry functions (from your original script)
+    # Function to parse time series data
     parse_time_series_section <- function(section_lines) {
+      
+      if (length(section_lines) < 2) {
+        return(data.frame())
+      }
+      
+      # Create temporary file
+      temp_file <- tempfile()
+      writeLines(section_lines, temp_file)
+      
+      tryCatch({
+        # Read as tab-delimited with first row as headers
+        timeseries_data <- read.table(temp_file, 
+                                      sep = "\t", 
+                                      header = TRUE, 
+                                      stringsAsFactors = FALSE,
+                                      fill = TRUE,
+                                      blank.lines.skip = TRUE,
+                                      comment.char = "",
+                                      na.strings = c("", "NA"),
+                                      quote = "\"'",  # Handle both double and single quotes
+                                      encoding = "UTF-8")  # Handle special characters
         
-        if (length(section_lines) < 2) {
-            return(data.frame())
+        # Clean up
+        unlink(temp_file)
+        
+        # Convert Time column to numeric if it exists
+        if ("Time" %in% names(timeseries_data)) {
+          timeseries_data$Time <- as.numeric(timeseries_data$Time)
         }
         
-        # Create temporary file
-        temp_file <- tempfile()
-        writeLines(section_lines, temp_file)
+        # Convert other numeric columns
+        numeric_cols <- names(timeseries_data)[names(timeseries_data) != "Time"]
+        for (col in numeric_cols) {
+          if (is.character(timeseries_data[[col]])) {
+            # Try to convert to numeric
+            numeric_version <- suppressWarnings(as.numeric(timeseries_data[[col]]))
+            if (!all(is.na(numeric_version))) {
+              timeseries_data[[col]] <- numeric_version
+            }
+          }
+        }
         
-        tryCatch({
-            # Read as tab-delimited with first row as headers
-            timeseries_data <- read.table(temp_file, 
-                                          sep = "\t", 
-                                          header = TRUE, 
-                                          stringsAsFactors = FALSE,
-                                          fill = TRUE,
-                                          blank.lines.skip = TRUE,
-                                          comment.char = "",
-                                          na.strings = c("", "NA"))
-            
-            # Clean up
-            unlink(temp_file)
-            
-            # Convert Time column to numeric if it exists
-            if ("Time" %in% names(timeseries_data)) {
-                timeseries_data$Time <- as.numeric(timeseries_data$Time)
-            }
-            
-            # Convert other numeric columns
-            numeric_cols <- names(timeseries_data)[names(timeseries_data) != "Time"]
-            for (col in numeric_cols) {
-                if (is.character(timeseries_data[[col]])) {
-                    # Try to convert to numeric
-                    numeric_version <- suppressWarnings(as.numeric(timeseries_data[[col]]))
-                    if (!all(is.na(numeric_version))) {
-                        timeseries_data[[col]] <- numeric_version
-                    }
-                }
-            }
-            
-            return(timeseries_data)
-            
-        }, error = function(e) {
-            unlink(temp_file)
-            
-            # Return basic dataframe if parsing fails
-            timeseries_data <- data.frame(
-                Line = 1:length(section_lines),
-                Content = section_lines,
-                stringsAsFactors = FALSE
-            )
-            
-            return(timeseries_data)
-        })
+        return(timeseries_data)
+        
+      }, error = function(e) {
+        unlink(temp_file)
+        
+        # Return basic dataframe if parsing fails
+        timeseries_data <- data.frame(
+          Line = 1:length(section_lines),
+          Content = section_lines,
+          stringsAsFactors = FALSE
+        )
+        
+        return(timeseries_data)
+      })
     }
     
+    # Function to parse tabular data - Robust version using readr
     parse_tabular_section <- function(section_lines) {
+      
+      if (length(section_lines) < 2) {
+        return(data.frame())
+      }
+      
+      # Create temporary file for reading
+      temp_file <- tempfile()
+      writeLines(section_lines, temp_file)
+      
+      # Try using readr's read_tsv which handles special characters better
+      tryCatch({
+        library(readr)
         
-        if (length(section_lines) < 2) {
-            return(data.frame())
-        }
+        # First try tab-delimited
+        metadata <- read_tsv(temp_file, 
+                             col_types = cols(.default = col_character()),
+                             show_col_types = FALSE,
+                             na = c("", "NA"),
+                             locale = locale(encoding = "UTF-8"))
         
-        # Create temporary file for reading
-        temp_file <- tempfile()
-        writeLines(section_lines, temp_file)
+        unlink(temp_file)
+        return(as.data.frame(metadata))
         
-        # Try to read as tab-delimited
+      }, error = function(e) {
+        
+        # If tab fails, try comma-delimited
         tryCatch({
-            metadata <- read.table(temp_file, 
-                                   sep = "\t", 
-                                   header = TRUE, 
-                                   stringsAsFactors = FALSE,
-                                   fill = TRUE,
-                                   blank.lines.skip = TRUE,
-                                   comment.char = "")
-            
-            # Clean up temp file
+          metadata <- read_csv(temp_file,
+                               col_types = cols(.default = col_character()),
+                               show_col_types = FALSE,
+                               na = c("", "NA"),
+                               locale = locale(encoding = "UTF-8"))
+          
+          unlink(temp_file)
+          return(as.data.frame(metadata))
+          
+        }, error = function(e2) {
+          
+          # Fallback to base R with more permissive settings
+          tryCatch({
+            # Try with readLines and manual parsing
+            lines <- readLines(temp_file, encoding = "UTF-8")
             unlink(temp_file)
             
-            return(metadata)
+            if (length(lines) < 2) {
+              return(data.frame())
+            }
             
-        }, error = function(e) {
+            # Split by tabs
+            split_lines <- strsplit(lines, "\t", fixed = TRUE)
             
-            # If tab-delimited fails, try comma-delimited
-            tryCatch({
-                periodic <- read.table(temp_file, 
-                                       sep = ",", 
-                                       header = TRUE, 
-                                       stringsAsFactors = FALSE,
-                                       fill = TRUE,
-                                       blank.lines.skip = TRUE,
-                                       comment.char = "")
-                
-                unlink(temp_file)
-                return(periodic)
-                
-            }, error = function(e2) {
-                
-                # If both fail, create simple dataframe from lines
-                unlink(temp_file)
-                
-                periodic <- data.frame(
-                    Line = 1:length(section_lines),
-                    Content = section_lines,
-                    stringsAsFactors = FALSE
-                )
-                
-                return(periodic)
-            })
+            # Get headers
+            headers <- split_lines[[1]]
+            
+            # Create data frame
+            data_list <- list()
+            for (i in 1:length(headers)) {
+              col_data <- sapply(split_lines[-1], function(x) {
+                if (length(x) >= i) x[i] else NA
+              })
+              data_list[[headers[i]]] <- col_data
+            }
+            
+            return(as.data.frame(data_list, stringsAsFactors = FALSE))
+            
+          }, error = function(e3) {
+            unlink(temp_file)
+            
+            # Final fallback
+            return(data.frame(
+              Line = 1:length(section_lines),
+              Content = section_lines,
+              stringsAsFactors = FALSE
+            ))
+          })
         })
+      })
     }
     
+    # Function to process data
     parse_peach_file <- function(file_path) {
+      
+      # Read the entire file
+      raw_lines <- readLines(file_path, warn = FALSE)
+      
+      # Find section breaks (lines starting with "=====")
+      section_breaks <- which(grepl("^=====", raw_lines))
+      
+      # Initialize list to store all dataframes
+      peach_data <- list()
+      
+      # Process each section
+      for (i in 1:length(section_breaks)) {
         
-        # Read the entire file
-        raw_lines <- readLines(file_path, warn = FALSE)
+        # Extract section name
+        section_line <- raw_lines[section_breaks[i]]
+        section_name <- trimws(gsub("^=====\\s*", "", section_line))
         
-        # Find section breaks (lines starting with "=====")
-        section_breaks <- which(grepl("^=====", raw_lines))
+        # Determine start and end lines for this section
+        start_line <- section_breaks[i] + 1
         
-        # Initialize list to store all dataframes
-        peach_data <- list()
-        
-        # Process each section
-        for (i in 1:length(section_breaks)) {
-            
-            # Extract section name
-            section_line <- raw_lines[section_breaks[i]]
-            section_name <- trimws(gsub("^=====\\s*", "", section_line))
-            
-            # Determine start and end lines for this section
-            start_line <- section_breaks[i] + 1
-            
-            if (i < length(section_breaks)) {
-                end_line <- section_breaks[i + 1] - 1
-            } else {
-                end_line <- length(raw_lines)
-            }
-            
-            # Extract section data
-            section_lines <- raw_lines[start_line:end_line]
-            
-            # Remove empty lines
-            section_lines <- section_lines[section_lines != ""]
-            
-            # Skip if no data in section
-            if (length(section_lines) == 0) {
-                next
-            }
-            
-            # Parse based on section type
-            if (section_name == "File Info") {
-                
-                # Parse file info section
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["file_info"]] <- metadata
-                
-            } else if (section_name == "GPS Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["gps_info"]] <- metadata
-                
-            } else if (section_name == "Crew Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["crew_info"]] <- metadata
-                
-            } else if (section_name == "Rig Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["rig_info"]] <- metadata
-                
-            } else if (section_name == "Venue Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["venue_info"]] <- metadata
-                
-            } else if (section_name == "Misc Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["misc_info"]] <- metadata
-                
-            } else if (section_name == "Boat Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["boat_info"]] <- metadata
-                
-            } else if (section_name == "Parameter Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["parameter_info"]] <- metadata
-                
-            } else if (section_name == "Sensor Info") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["sensor_info"]] <- metadata
-                
-            } else if (section_name == "Piece") {
-                
-                metadata <- parse_tabular_section(section_lines)
-                peach_data[["piece_info"]] <- metadata
-                
-            } else if (section_name == "Intervals") {
-                
-                # Skip intervals section - not needed
-                next
-                
-            } else if (grepl("Periodic", section_name)) {
-                
-                # Parse periodic time series data (high-frequency measurements)
-                periodic <- parse_time_series_section(section_lines)
-                peach_data[["periodic"]] <- periodic
-                
-            } else if (grepl("Aperiodic", section_name)) {
-                
-                # Parse aperiodic time series data
-                # Extract the hex identifier if present
-                hex_id <- gsub(".*\\s+(0x[0-9A-Fa-f]+).*", "\\1", section_name)
-                
-                aperiodic <- parse_time_series_section(section_lines)
-                
-                # Create meaningful names for aperiodic sections
-                if (hex_id == "0x8013") {
-                    section_key <- "aperiodic_boat"
-                } else if (hex_id == "0x800A") {
-                    section_key <- "aperiodic_crew"
-                } else {
-                    # Fallback for unknown hex IDs
-                    section_key <- paste0("aperiodic_", hex_id)
-                }
-                
-                peach_data[[section_key]] <- aperiodic
-                
-            } else {
-                
-                # Generic tabular parsing for unknown sections
-                metadata <- parse_tabular_section(section_lines)
-                
-                # Create safe dataframe name
-                safe_name <- tolower(gsub("[^A-Za-z0-9_]", "_", section_name))
-                safe_name <- gsub("_+", "_", safe_name)  # Remove multiple underscores
-                safe_name <- gsub("^_|_$", "", safe_name)  # Remove leading/trailing underscores
-                
-                peach_data[[safe_name]] <- metadata
-            }
+        if (i < length(section_breaks)) {
+          end_line <- section_breaks[i + 1] - 1
+        } else {
+          end_line <- length(raw_lines)
         }
         
-        return(peach_data)
+        # Extract section data
+        section_lines <- raw_lines[start_line:end_line]
+        
+        # Remove empty lines
+        section_lines <- section_lines[section_lines != ""]
+        
+        # Skip if no data in section
+        if (length(section_lines) == 0) {
+          next
+        }
+        
+        # Parse based on section type
+        if (section_name == "File Info") {
+          
+          # Parse file info section
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["file_info"]] <- metadata
+          
+        } else if (section_name == "GPS Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["gps_info"]] <- metadata
+          
+        } else if (section_name == "Crew Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["crew_info"]] <- metadata
+          
+        } else if (section_name == "Rig Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["rig_info"]] <- metadata
+          
+        } else if (section_name == "Venue Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["venue_info"]] <- metadata
+          
+        } else if (section_name == "Misc Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["misc_info"]] <- metadata
+          
+        } else if (section_name == "Boat Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["boat_info"]] <- metadata
+          
+        } else if (section_name == "Parameter Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["parameter_info"]] <- metadata
+          
+        } else if (section_name == "Sensor Info") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["sensor_info"]] <- metadata
+          
+        } else if (section_name == "Piece") {
+          
+          metadata <- parse_tabular_section(section_lines)
+          peach_data[["piece_info"]] <- metadata
+          
+        } else if (section_name == "Intervals") {
+          
+          # Skip intervals section - not needed
+          next
+          
+        } else if (grepl("Periodic", section_name)) {
+          
+          # Parse periodic time series data (high-frequency measurements)
+          periodic <- parse_time_series_section(section_lines)
+          peach_data[["periodic"]] <- periodic
+          
+        } else if (grepl("Aperiodic", section_name)) {
+          
+          # Parse aperiodic time series data
+          # Extract the hex identifier if present
+          hex_id <- gsub(".*\\s+(0x[0-9A-Fa-f]+).*", "\\1", section_name)
+          
+          aperiodic <- parse_time_series_section(section_lines)
+          
+          # Create meaningful names for aperiodic sections
+          if (hex_id == "0x8013") {
+            section_key <- "aperiodic_boat"
+          } else if (hex_id == "0x800A") {
+            section_key <- "aperiodic_crew"
+          } else {
+            # Fallback for unknown hex IDs
+            section_key <- paste0("aperiodic_", hex_id)
+          }
+          
+          peach_data[[section_key]] <- aperiodic
+          
+        } else {
+          
+          # Generic tabular parsing for unknown sections
+          metadata <- parse_tabular_section(section_lines)
+          
+          # Create safe dataframe name
+          safe_name <- tolower(gsub("[^A-Za-z0-9_]", "_", section_name))
+          safe_name <- gsub("_+", "_", safe_name)  # Remove multiple underscores
+          safe_name <- gsub("^_|_$", "", safe_name)  # Remove leading/trailing underscores
+          
+          peach_data[[safe_name]] <- metadata
+        }
+      }
+      
+      return(peach_data)
     }
     
     # Process uploaded file
@@ -375,18 +405,18 @@ server <- function(input, output, session) {
             parameter_info <- parsed_data$parameter_info
             sensor_info <- parsed_data$sensor_info
             piece_info <- parsed_data$piece_info
-            aperiodic_boat <- parsed_data$aperiodic_boat
-            aperiodic <- parsed_data$aperiodic_crew
+            aperiodic_boat <- parsed_data$aperiodic_boat  # GPS and boat data (0x8013)
+            aperiodic <- parsed_data$aperiodic_crew  # Stroke analysis data (0x800A)
             periodic <- parsed_data$periodic
             
             # Clean metadata
-            boat_info <- select(boat_info, Boat.Name, Seats, Coxed, Rig, Manufacturer)
+            boat_info <- select(boat_info, `Boat Name`, Seats, Coxed, Rig, Manufacturer)
             colnames(boat_info) <- c("crew", "seats", "coxed", "rig", "manufacturer")
             
             crew_info <- select(crew_info, Position, Name)
             colnames(crew_info) <- c("position", "name")
             
-            file_info <- select(file_info, Filename, Start.Time)
+            file_info <- select(file_info, Filename, `Start Time`)
             colnames(file_info) <- c("filename", "date")
             file_info$date <- format(as.Date(file_info$date, format = "%a, %d %b %Y"), 
                                      "%A, %dth of %B %Y")
@@ -411,7 +441,7 @@ server <- function(input, output, session) {
             parameter_info <- select(parameter_info, Parameter, Value, Units)
             colnames(parameter_info) <- c("parameter", "value", "units")
             
-            piece_info <- select(piece_info, Start, End, X., Duration, Distance, Rating, Pace)
+            piece_info <- select(piece_info, Start, End, `#`, Duration, Distance, Rating, Pace)
             colnames(piece_info) <- c("start_time", "end_time", "description", "duration", "distance", "rate", "pace")
             
             rig_info <- select(rig_info, Position)
@@ -433,12 +463,17 @@ server <- function(input, output, session) {
             colnames(misc_info) <- c("comments")
             
             # Clean aperiodic data
+            # Remove first two rows
             aperiodic <- aperiodic %>% slice(-1, -2)
+            
+            # Remove duplicate data (keeps first occurrence)
             aperiodic <- aperiodic[, !duplicated(t(aperiodic))]
+            
             aperiodic <- aperiodic %>% 
                 select_if(~ !all(is.na(.)))
             
             aperiodic_boat <- select(aperiodic, "Time", "StrokeNumber", "AvgBoatSpeed", "Rating", "Dist.Stroke", "Average.Power")
+            
             colnames(aperiodic_boat) <- c("time", "stroke", "speed", "rate", "distance_per_stroke", "boat_power")
             
             # Remove rows with the lowest stroke number
@@ -451,7 +486,7 @@ server <- function(input, output, session) {
             
             aperiodic_long <- aperiodic %>%
                 pivot_longer(
-                    cols = -c(time, stroke),
+                    cols = -c(time, stroke),  # Keep both time and stroke as is
                     names_to = c(".value", "seat"),
                     names_pattern = "(.+)_seat_(.+)")
             

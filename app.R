@@ -53,6 +53,20 @@ ui <- fluidPage(
                 border-radius: 5px;
                 margin: 10px 0;
             }
+            .help-content {
+                max-width: 800px;
+                line-height: 1.6;
+                padding: 20px;
+            }
+            .help-content h2 {
+                color: #2c3e50;
+                border-bottom: 2px solid #3498db;
+                padding-bottom: 10px;
+            }
+            .help-content h3 {
+                color: #34495e;
+                margin-top: 25px;
+            }
         "))
     ),
     
@@ -62,26 +76,179 @@ ui <- fluidPage(
         p("Upload a telemetry .txt file to process and download the results as CSV")
     ),
     
-    # Main content
-    sidebarLayout(
-        sidebarPanel(
-            h4("Upload Telemetry File"),
-            fileInput("telemetryFile", 
-                      "Choose .txt file:",
-                      accept = c(".txt", "text/plain")),
-            hr(),
-            h4("File Information"),
-            uiOutput("fileInfo"),
-            hr(),
-            h4("Processing Status"),
-            uiOutput("processingStatus")
+    # Tabbed interface
+    tabsetPanel(
+        # Main processing tab
+        tabPanel("Process Data",
+            sidebarLayout(
+                sidebarPanel(
+                    h4("Upload Telemetry File"),
+                    fileInput("telemetryFile", 
+                              "Choose .txt file:",
+                              accept = c(".txt", "text/plain")),
+                    hr(),
+                    h4("File Information"),
+                    uiOutput("fileInfo"),
+                    hr(),
+                    h4("Processing Status"),
+                    uiOutput("processingStatus")
+                ),
+                
+                mainPanel(
+                    h3("Processed Data Preview"),
+                    uiOutput("downloadSection"),
+                    hr(),
+                    DT::dataTableOutput("dataPreview")
+                )
+            )
         ),
         
-        mainPanel(
-            h3("Processed Data Preview"),
-            uiOutput("downloadSection"),
-            hr(),
-            DT::dataTableOutput("dataPreview")
+        # Help tab
+        tabPanel("Help & Documentation",
+            div(class = "help-content",
+                h1("LMBC Telemetry Processor - User Guide"),
+                
+                h2("What This App Does"),
+                p("This application takes telemetry data files from rowing sessions and converts them into easy-to-read spreadsheets with detailed performance metrics for each crew member. The app calculates:"),
+                tags$ul(
+                    tags$li(tags$strong("Power metrics"), " - Overall power output, stroke-side and bow-side power"),
+                    tags$li(tags$strong("Work distribution"), " - How power is distributed across the stroke (Q1-Q4 percentages)"),
+                    tags$li(tags$strong("Angle measurements"), " - Catch angles, finish angles, and stroke length"),
+                    tags$li(tags$strong("Slip analysis"), " - Catch slip, finish slip, and total slip"),
+                    tags$li(tags$strong("Efficiency metrics"), " - Effective length and stroke effectiveness")
+                ),
+                
+                h2("How to Use the App"),
+                
+                h3("Step 1: Getting Started"),
+                tags$ol(
+                    tags$li("Click on the 'Process Data' tab above"),
+                    tags$li("You'll see an upload area on the left and a preview area on the right")
+                ),
+                
+                h3("Step 2: Upload Your Data File"),
+                tags$ol(
+                    tags$li("Click the ", tags$strong("'Choose .txt file'"), " button in the sidebar"),
+                    tags$li("Select your telemetry data file from your computer"),
+                    tags$ul(
+                        tags$li("The file must be a .txt file from your rowing telemetry system"),
+                        tags$li("Files can be up to 30MB in size")
+                    ),
+                    tags$li("Once selected, you'll see the file name and size displayed")
+                ),
+                
+                h3("Step 3: Processing"),
+                tags$ol(
+                    tags$li("The app will automatically start processing your file"),
+                    tags$li("You'll see a yellow 'Processing...' message while the app works"),
+                    tags$li("This usually takes 10-30 seconds depending on file size")
+                ),
+                
+                h3("Step 4: View Results"),
+                tags$ol(
+                    tags$li("When processing is complete, you'll see a green 'Success!' message"),
+                    tags$li("A data preview table will appear showing your processed results"),
+                    tags$li("Each row represents one crew member with all their performance metrics")
+                ),
+                
+                h3("Step 5: Download Your Results"),
+                tags$ol(
+                    tags$li("Click the blue ", tags$strong("'Download CSV'"), " button"),
+                    tags$li("Save the file to your computer"),
+                    tags$li("The filename will be automatically generated with the date and time (e.g., data_2024_12_06_14_30_15.csv)")
+                ),
+                
+                h2("Understanding Your Results"),
+                p("Your downloaded CSV file contains 36 columns of data for each crew member:"),
+                
+                h3("Basic Information"),
+                tags$ul(
+                    tags$li(tags$strong("seat"), " - Seat position (1-8)"),
+                    tags$li(tags$strong("name"), " - Crew member name"),
+                    tags$li(tags$strong("day/date"), " - When the session took place"),
+                    tags$li(tags$strong("type"), " - Type of rowing piece"),
+                    tags$li(tags$strong("boat"), " - Boat configuration (e.g., '8+', '4-')")
+                ),
+                
+                h3("Session Metrics"),
+                tags$ul(
+                    tags$li(tags$strong("duration"), " - Length of the piece"),
+                    tags$li(tags$strong("rate"), " - Stroke rate (strokes per minute)"),
+                    tags$li(tags$strong("distance"), " - Total distance covered"),
+                    tags$li(tags$strong("speed"), " - Average boat speed"),
+                    tags$li(tags$strong("pace"), " - Time per 500m")
+                ),
+                
+                h3("Power Analysis"),
+                tags$ul(
+                    tags$li(tags$strong("power"), " - Overall power output (watts)"),
+                    tags$li(tags$strong("power_stroke"), " - Power for stroke-side rowers (watts)"),
+                    tags$li(tags$strong("power_bow"), " - Power for bow-side rowers (watts)")
+                ),
+                
+                h3("Work Distribution (with benchmarks)"),
+                tags$ul(
+                    tags$li(tags$strong("work_q1_percent"), " - Power in first quarter of stroke (benchmark: 18%)"),
+                    tags$li(tags$strong("work_q2_percent"), " - Power in second quarter (benchmark: 37%)"),
+                    tags$li(tags$strong("work_q3_percent"), " - Power in third quarter (benchmark: 34%)"),
+                    tags$li(tags$strong("work_q4_percent"), " - Power in fourth quarter (benchmark: 11%)"),
+                    tags$li("Each work metric includes a 'difference' column showing how you compare to the benchmark")
+                ),
+                
+                h3("Technique Analysis"),
+                tags$ul(
+                    tags$li(tags$strong("angle_catch"), " - Catch angle (degrees)"),
+                    tags$li(tags$strong("angle_finish"), " - Finish angle (degrees)"),
+                    tags$li(tags$strong("angle_70_percent"), " - Angle at 70% of maximum force"),
+                    tags$li(tags$strong("length"), " - Total stroke length"),
+                    tags$li(tags$strong("effective_length"), " - Useful stroke length (after accounting for slip)")
+                ),
+                
+                h3("Slip Analysis"),
+                tags$ul(
+                    tags$li(tags$strong("slip_catch"), " - Blade slip at catch"),
+                    tags$li(tags$strong("slip_finish"), " - Blade slip at finish"),
+                    tags$li(tags$strong("slip_total"), " - Total slip during stroke")
+                ),
+                
+                h2("Troubleshooting"),
+                
+                h3("File Won't Upload"),
+                tags$ul(
+                    tags$li(tags$strong("Check file format"), ": Only .txt files are accepted"),
+                    tags$li(tags$strong("Check file size"), ": Files must be under 30MB")
+                ),
+                
+                h3("Processing Errors"),
+                tags$ul(
+                    tags$li(tags$strong("Special characters"), ": The app handles special characters, but very unusual formatting might cause issues"),
+                    tags$li(tags$strong("Corrupted files"), ": Try re-exporting the file from your telemetry system"),
+                    tags$li(tags$strong("Missing data sections"), ": Some telemetry files may be incomplete")
+                ),
+                
+                h3("No Data in Results"),
+                tags$ul(
+                    tags$li(tags$strong("Check your file"), ": Ensure it contains the expected telemetry sections"),
+                    tags$li(tags$strong("Verify format"), ": File should have clear section breaks marked with '======'")
+                ),
+                
+                h2("Tips for Best Results"),
+                tags$ul(
+                    tags$li(tags$strong("Regular backups"), " - Keep copies of your original telemetry files"),
+                    tags$li(tags$strong("Consistent naming"), " - Use consistent names for your crew members")
+                ),
+                
+                h2("Data Privacy"),
+                tags$ul(
+                    tags$li("Files are processed temporarily and not permanently stored"),
+                    tags$li("Your data remains private and is not shared"),
+                    tags$li("Original files are not modified"),
+                    tags$li("Processed results are only accessible to you")
+                ),
+                
+                hr(),
+                tags$em("This application processes LMBC telemetry data to provide comprehensive rowing performance analysis. For technical support or feature requests, please contact your system administrator.")
+            )
         )
     )
 )
